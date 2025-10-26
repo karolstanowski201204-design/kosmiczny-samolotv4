@@ -1,0 +1,392 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Kosmiczna Rakieta — PWA</title>
+<link rel="manifest" href="manifest.json">
+<style>
+:root {
+  --ui-bg: rgba(0,0,0,0.45);
+  --accent: #00bfff;
+  --gold: #ffd700;
+  --max-width: 1100px;
+}
+body{
+  margin:0;
+  min-height:100vh;
+  display:flex;
+  justify-content:center;
+  background: radial-gradient(ellipse at bottom,#0d1b2a 0%,#000 100%);
+  font-family: Inter, Arial, Helvetica, sans-serif;
+  color:white;
+}
+#app{
+  width:100%;
+  max-width:var(--max-width);
+  display:flex;
+  flex-direction:column;
+  align-items:center;
+}
+.canvas-wrap{
+  width:100%;
+  max-width:900px;
+  aspect-ratio:16/10;
+  border-radius:6px;
+  overflow:hidden;
+  box-shadow:0 8px 30px rgba(0,0,0,0.6);
+  border:3px solid #111827;
+  position:relative;
+  background: radial-gradient(circle at 50% 50%, #001933, #000);
+}
+#gameCanvas{
+  width:100%;
+  height:100%;
+  display:block;
+  cursor:none;
+}
+.hud{
+  position:absolute;
+  top:12px;
+  left:12px;
+  display:flex;
+  flex-direction:column;
+  gap:8px;
+  z-index:20;
+}
+.hud .box{
+  background:var(--ui-bg);
+  padding:6px 10px;
+  border-radius:8px;
+  font-weight:700;
+  text-shadow:1px 1px 2px #000;
+  white-space:nowrap;
+}
+#gameOver{
+  position:absolute;
+  top:45%;
+  left:50%;
+  transform:translate(-50%,-50%);
+  font-size:36px;
+  color:#ff6666;
+  text-shadow:2px 2px 6px black;
+  display:none;
+  z-index:30;
+  text-align:center;
+}
+#restartBtn{
+  position:absolute;
+  top:58%;
+  left:50%;
+  transform:translate(-50%,-50%);
+  display:none;
+  z-index:30;
+  padding:10px 16px;
+  border-radius:8px;
+  border:0;
+  background:var(--accent);
+  color:#001;
+  font-weight:800;
+  cursor:pointer;
+  box-shadow:0 6px 18px rgba(0,187,255,0.12);
+}
+#shop{
+  width:100%;
+  max-width:900px;
+  background:var(--ui-bg);
+  border-radius:10px;
+  padding:12px;
+  border:2px solid var(--accent);
+  box-sizing:border-box;
+  box-shadow:0 8px 30px rgba(0,0,0,0.4);
+  margin-top:12px;
+}
+#shop h3{margin:4px 0 10px 0;color:var(--accent);text-align:center}
+.shop-item{display:flex;align-items:center;gap:10px;padding:8px;border-radius:8px;background:rgba(255,255,255,0.03);margin:6px 0;cursor:pointer}
+.shop-item:hover{background:rgba(0,191,255,0.06)}
+.preview-canvas{width:70px;height:80px;flex:0 0 70px;border-radius:6px;background:#071226}
+.shop-label{flex:1}
+.shop-price{text-align:right;color:var(--gold);font-weight:800;width:64px}
+#footerSmall{margin-top:8px;text-align:center;color:#aaa;font-size:12px}
+</style>
+</head>
+<body>
+<div id="app">
+<div class="canvas-wrap">
+  <canvas id="gameCanvas"></canvas>
+  <div class="hud">
+    <div id="record" class="box">Rekord: 0</div>
+    <div id="score" class="box">Punkty: 0</div>
+    <div id="money" class="box">💰 Pieniądze: 0</div>
+    <div id="shield" class="box">🛡 Tarcza: Nieaktywna</div>
+    <div id="shoot" class="box">🚀 Strzały: Nieaktywne</div>
+  </div>
+  <div id="gameOver">💥 Koniec gry!</div>
+  <button id="restartBtn" onclick="onRestart()">🔁 Zagraj ponownie</button>
+</div>
+<aside id="shop">
+<h3>🛒 Sklep</h3>
+<div id="items"></div>
+<div id="footerSmall">Rakieta 10💰 · Strzały 20💰 (2 gry) · Tarcza 15💰</div>
+</aside>
+</div>
+<script>
+// --- Konfiguracja ---
+const VIRTUAL_W=800, VIRTUAL_H=500;
+const canvas=document.getElementById('gameCanvas');
+const ctx=canvas.getContext('2d',{alpha:false});
+let rocket, obstacles=[], stars=[], moneyBags=[], shots=[], explosions=[];
+let score=0, highScore=parseInt(localStorage.getItem('highScore'))||0;
+let money=parseInt(localStorage.getItem('money'))||0;
+let shieldActive=(localStorage.getItem('shieldActive')==='true');
+let shootingRemaining=parseInt(localStorage.getItem('shootingRemaining'))||0;
+let shootingActive=shootingRemaining>0;
+let currentRocketIndex=parseInt(localStorage.getItem('planeIndex'))||0;
+let gameOver=false;
+let obstacleSpeed=4, baseSpeed=4, obstacleCount=0;
+let mouseX=VIRTUAL_W*0.2, mouseY=VIRTUAL_H*0.4;
+const ROCKET_PRESETS=[
+  {body:'#ff4444',accent:'#00bfff'},
+  {body:'#44ff44',accent:'#0099ff'},
+  {body:'#ffff66',accent:'#3333ff'},
+  {body:'#cc66ff',accent:'#00ffff'},
+  {body:'#ffffff',accent:'#ff9900'},
+  {body:'#00ffcc',accent:'#ff3399'},
+  {body:'#ff9933',accent:'#ffffff'}
+];
+let spawnerId=null, moneyBagId=null, speedIncId=null;
+
+// --- Funkcje ---
+function resizeCanvasToCSSSize(){
+  const wrap=canvas.parentElement;
+  const rect=wrap.getBoundingClientRect();
+  canvas.width=VIRTUAL_W; canvas.height=VIRTUAL_H;
+  const scale=Math.min(rect.width/VIRTUAL_W,rect.height/VIRTUAL_H);
+  ctx.setTransform(scale,0,0,scale,0,0);
+}
+window.addEventListener('resize',resizeCanvasToCSSSize);
+resizeCanvasToCSSSize();
+
+function initGame(){
+  rocket={x:100,y:200,width:40,height:80};
+  obstacles=[]; stars=[]; moneyBags=[]; shots=[]; explosions=[];
+  score=0; gameOver=false; obstacleSpeed=baseSpeed; obstacleCount=0;
+  shootingActive=shootingRemaining>0;
+  for(let i=0;i<120;i++) stars.push({x:Math.random()*VIRTUAL_W,y:Math.random()*VIRTUAL_H,size:Math.random()*2,speed:0.5+Math.random()*1.2});
+  clearInterval(spawnerId); clearInterval(moneyBagId); clearInterval(speedIncId);
+  spawnerId=setInterval(()=>{if(!gameOver) spawnObstacle();},1200);
+  moneyBagId=setInterval(()=>{if(!gameOver) spawnMoneyBag();},10000);
+  speedIncId=setInterval(()=>{obstacleSpeed+=0.5;},5000);
+  document.getElementById('gameOver').style.display='none';
+  document.getElementById('restartBtn').style.display='none';
+  updateHUD(); resizeCanvasToCSSSize();
+}
+
+// --- Rysowanie rakiety ---
+function drawPlayerRocketLogical(atX,atY,scale=1,styleIndex=currentRocketIndex,showShield=false){
+  const style=ROCKET_PRESETS[styleIndex]||ROCKET_PRESETS[0];
+  const width=40*scale,height=80*scale,gy=height/2;
+  ctx.save(); ctx.translate(atX,atY);
+  const flameLen=(28*scale)+Math.random()*6*scale;
+  const grad=ctx.createLinearGradient(-flameLen,gy,0,gy);
+  grad.addColorStop(0,"rgba(255,255,180,1)"); grad.addColorStop(0.25,"rgba(255,150,30,0.95)"); grad.addColorStop(1,"rgba(255,0,0,0.35)");
+  ctx.fillStyle=grad; ctx.beginPath(); ctx.moveTo(-flameLen,gy); ctx.lineTo(0,gy-16*scale); ctx.lineTo(0,gy+16*scale); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=style.body; ctx.beginPath(); ctx.moveTo(0,gy); ctx.lineTo(width,gy-14*scale); ctx.lineTo(width,gy+14*scale); ctx.closePath(); ctx.fill();
+  ctx.fillStyle=style.accent; ctx.beginPath(); ctx.moveTo(width*0.5,gy-14*scale); ctx.lineTo(width*0.7,gy-30*scale); ctx.lineTo(width*0.7,gy-14*scale); ctx.closePath(); ctx.fill();
+  ctx.beginPath(); ctx.moveTo(width*0.5,gy+14*scale); ctx.lineTo(width*0.7,gy+30*scale); ctx.lineTo(width*0.7,gy+14*scale); ctx.closePath(); ctx.fill();
+  ctx.fillStyle="rgba(255,255,255,0.9)"; ctx.beginPath(); ctx.arc(width*0.72,gy,6*scale,0,Math.PI*2); ctx.fill();
+  if(showShield){ctx.strokeStyle="#33ffff";ctx.lineWidth=4*scale;ctx.beginPath();ctx.arc(width/2,gy,24*scale,0,Math.PI*2);ctx.stroke();}
+  ctx.restore();
+}
+
+// --- Obstacles ---
+function spawnObstacle(){
+  const size=Math.random()*40+22;
+  const makeStrong=(obstacleCount>0 && obstacleCount%5===0 && Math.random()>0.4);
+  obstacles.push({x:VIRTUAL_W,y:Math.random()*(VIRTUAL_H-size),size,speed:makeStrong?obstacleSpeed*0.85:obstacleSpeed,passed:false,strong:!!makeStrong});
+}
+
+// --- Money Bags ---
+function spawnMoneyBag(){
+  if(moneyBags.length>=2) return;
+  const size=36; const y=50+Math.random()*(VIRTUAL_H-100);
+  moneyBags.push({x:VIRTUAL_W,y,size,speed:3+Math.random()*1.5,life:150,anim:0,collected:false});
+}
+
+// --- HUD ---
+function updateHUD(){
+  document.getElementById('record').innerText=`Rekord: ${highScore}`;
+  document.getElementById('score').innerText=`Punkty: ${score}`;
+  document.getElementById('money').innerText=`💰 Pieniądze: ${money}`;
+  document.getElementById('shield').innerText=`🛡 Tarcza: ${shieldActive?'Aktywna':'Nieaktywna'}`;
+  document.getElementById('shoot').innerText=`🚀 Strzały: ${shootingActive?'Aktywne':'Nieaktywne'}`;
+}
+
+// --- Input ---
+canvas.addEventListener('mousemove',e=>{
+  const rect=canvas.getBoundingClientRect();
+  const scale=Math.min(rect.width/VIRTUAL_W,rect.height/VIRTUAL_H);
+  mouseX=(e.clientX-rect.left)/scale;
+  mouseY=(e.clientY-rect.top)/scale;
+});
+canvas.addEventListener('mousedown',e=>{
+  if(e.button===0) fireProjectile();
+});
+canvas.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  const rect=canvas.getBoundingClientRect();
+  const scale=Math.min(rect.width/VIRTUAL_W,rect.height/VIRTUAL_H);
+  const t=e.touches[0];
+  mouseX=(t.clientX-rect.left)/scale;
+  mouseY=(t.clientY-rect.top)/scale;
+  fireProjectile();
+});
+
+// --- Projectiles ---
+function fireProjectile(){
+  if(!shootingActive) return;
+  shots.push({x:rocket.x+rocket.width+6,y:rocket.y+rocket.height/2,speed:12});
+}
+function updateProjectiles(){
+  for(const s of shots){ s.x+=s.speed; drawProjectileLogical(s); }
+  for(let i=shots.length-1;i>=0;i--){
+    const s=shots[i];
+    for(let j=obstacles.length-1;j>=0;j--){
+      const o=obstacles[j];
+      const dx=Math.abs(s.x-o.x), dy=Math.abs(s.y-o.y);
+      if(dx<o.size/2 && dy<o.size/2){
+        if(!o.strong){ spawnExplosion(o.x,o.y); obstacles.splice(j,1); score++; updateHUD(); }
+        else{ spawnExplosion(s.x,s.y); }
+        shots.splice(i,1); break;
+      }
+    }
+  }
+  shots=shots.filter(s=>s.x<VIRTUAL_W+100);
+}
+function drawProjectileLogical(s){
+  ctx.fillStyle='cyan'; ctx.beginPath(); ctx.arc(s.x,s.y,6,0,Math.PI*2); ctx.fill();
+}
+
+// --- Explosions ---
+function spawnExplosion(x,y){ for(let i=0;i<18;i++){ explosions.push({x,y,dx:(Math.random()-0.5)*5,dy:(Math.random()-0.5)*5,size:Math.random()*6+2,life:30,color:`hsl(${Math.random()*60},100%,50%)`});}}
+function drawExplosions(){ for(const e of explosions){ ctx.fillStyle=e.color; ctx.beginPath(); ctx.arc(e.x,e.y,e.size,0,Math.PI*2); ctx.fill(); e.x+=e.dx; e.y+=e.dy; e.life--;} explosions=explosions.filter(e=>e.life>0);}
+
+// --- Money Bags ---
+function drawMoneyBagsLogical(){
+  for(const m of moneyBags){
+    ctx.save();
+    ctx.translate(m.x,m.y-m.anim);
+    ctx.fillStyle='saddlebrown';
+    ctx.beginPath(); ctx.ellipse(0,0,m.size/2,m.size/2,0,0,Math.PI*2); ctx.fill();
+    ctx.strokeStyle='#333'; ctx.lineWidth=2; ctx.stroke();
+    ctx.fillStyle='gold'; ctx.font='18px Arial'; ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('💰',0,0);
+    ctx.restore();
+    if(!m.collected) m.x-=m.speed;
+    if(m.anim>0) m.anim-=2;
+    m.life--;
+  }
+  moneyBags=moneyBags.filter(m=>m.life>0 && (m.x+m.size>0));
+}
+function checkMoneyBagPickup(){
+  for(let i=moneyBags.length-1;i>=0;i--){
+    const m=moneyBags[i];
+    if(m.collected) continue;
+    if(rocket.x<m.x+m.size/2 && rocket.x+rocket.width>m.x-m.size/2 && rocket.y<m.y+m.size/2 && rocket.y+rocket.height>m.y-m.size/2){
+      money+=5; localStorage.setItem('money',money);
+      m.collected=true; m.anim=40; m.life=20;
+      updateHUD();
+    }
+  }
+}
+
+// --- Obstacles drawing ---
+function drawObstaclesLogical(){
+  for(const o of obstacles){
+    if(o.strong){
+      const g=ctx.createRadialGradient(o.x-o.size*0.12,o.y-o.size*0.12,2,o.x,o.y,o.size/2);
+      g.addColorStop(0,'#7a7a7a'); g.addColorStop(1,'#222'); ctx.fillStyle=g;
+      ctx.strokeStyle='#999'; ctx.lineWidth=3;
+    } else { ctx.fillStyle='orange'; ctx.strokeStyle='#663300'; ctx.lineWidth=2; }
+    ctx.beginPath(); ctx.arc(o.x,o.y,o.size/2,0,Math.PI*2); ctx.fill(); ctx.stroke();
+    if(o.strong){ ctx.fillStyle='rgba(255,255,255,0.12)'; ctx.beginPath(); ctx.arc(o.x-o.size*0.15,o.y-o.size*0.15,o.size*0.18,0,Math.PI*2); ctx.fill(); }
+  }
+}
+
+// --- Main loop ---
+function gameLoop(){
+  ctx.clearRect(0,0,VIRTUAL_W,VIRTUAL_H);
+  for(const s of stars){ s.x-=s.speed; if(s.x<-5)s.x=VIRTUAL_W+5;}
+  drawStars();
+  if(!gameOver){
+    rocket.x+=(mouseX-rocket.x-rocket.width/2)*0.1;
+    rocket.y+=(mouseY-rocket.y-rocket.height/2)*0.1;
+    rocket.x=Math.max(0,Math.min(rocket.x,VIRTUAL_W-rocket.width));
+    rocket.y=Math.max(0,Math.min(rocket.y,VIRTUAL_H-rocket.height));
+    drawPlayerRocketLogical(rocket.x,rocket.y,1,currentRocketIndex,shieldActive);
+    updateProjectiles();
+    for(const o of obstacles) o.x-=o.speed;
+    drawObstaclesLogical();
+    drawMoneyBagsLogical();
+    checkMoneyBagPickup();
+    for(let i=obstacles.length-1;i>=0;i--){
+      const o=obstacles[i];
+      if(rocket.x<o.x+o.size/2 && rocket.x+rocket.width>o.x-o.size/2 && rocket.y<o.y+o.size/2 && rocket.y+rocket.height>o.y-o.size/2){
+        if(shieldActive){ shieldActive=false; localStorage.setItem('shieldActive','false'); obstacles.splice(i,1); updateHUD(); spawnExplosion(rocket.x+rocket.width/2,rocket.y+rocket.height/2); continue; }
+        else{ gameOver=true; document.getElementById('gameOver').style.display='block'; document.getElementById('restartBtn').style.display='block'; break; }
+      }
+      if(!o.passed && (o.x+o.size/2)<rocket.x){
+        o.passed=true; score++; obstacleCount++;
+        if(obstacleCount%5===0){ money++; localStorage.setItem('money',money); }
+        if(score>highScore){ highScore=score; localStorage.setItem('highScore',highScore); money+=5; localStorage.setItem('money',money); }
+        updateHUD();
+      }
+    }
+    drawExplosions();
+  } else { drawPlayerRocketLogical(rocket.x,rocket.y,1,currentRocketIndex,false); }
+  requestAnimationFrame(gameLoop);
+}
+function drawStars(){ctx.fillStyle='white'; for(const s of stars){ ctx.beginPath(); ctx.arc(s.x,s.y,s.size,0,Math.PI*2); ctx.fill();}}
+
+// --- Shop ---
+function createPreviewCanvas(preset){
+  const c=document.createElement('canvas'); c.width=70; c.height=80;
+  const pc=c.getContext('2d'); pc.clearRect(0,0,c.width,c.height);
+  pc.save(); pc.translate(20,40);
+  const grad=pc.createLinearGradient(-28,0,0,0); grad.addColorStop(0,"rgba(255,255,180,1)"); grad.addColorStop(0.25,"rgba(255,150,30,0.95)"); grad.addColorStop(1,"rgba(255,0,0,0.35)");
+  pc.fillStyle=grad; pc.beginPath(); pc.moveTo(-28,0); pc.lineTo(0,-16); pc.lineTo(0,16); pc.closePath(); pc.fill();
+  pc.fillStyle=preset.body; pc.beginPath(); pc.moveTo(0,0); pc.lineTo(40,-14); pc.lineTo(40,14); pc.closePath(); pc.fill();
+  pc.fillStyle=preset.accent; pc.beginPath(); pc.moveTo(20,-14); pc.lineTo(28,-30); pc.lineTo(28,-14); pc.closePath(); pc.fill();
+  pc.beginPath(); pc.moveTo(20,14); pc.lineTo(28,30); pc.lineTo(28,14); pc.closePath(); pc.fill(); pc.restore();
+  return c;
+}
+function loadShop(){
+  const items=document.getElementById('items'); items.innerHTML='';
+  ROCKET_PRESETS.forEach((p,idx)=>{
+    const div=document.createElement('div'); div.className='shop-item';
+    const preview=createPreviewCanvas(p); const label=document.createElement('div'); label.className='shop-label'; label.innerText=`Rakieta ${idx+1}`;
+    const price=document.createElement('div'); price.className='shop-price'; price.innerText='10💰';
+    div.appendChild(preview); div.appendChild(label); div.appendChild(price);
+    div.onclick=()=>{if(money>=10){ money-=10; localStorage.setItem('money',money); currentRocketIndex=idx; localStorage.setItem('planeIndex',currentRocketIndex); updateHUD(); loadShop(); } else alert('Za mało pieniędzy!');};
+    items.appendChild(div);
+  });
+  const sdiv=document.createElement('div'); sdiv.className='shop-item'; sdiv.innerHTML=`<div class="shop-label">🚀 Strzały (2 gry)</div><div class="shop-price">20💰</div>`;
+  sdiv.onclick=()=>{if(money>=20){ money-=20; localStorage.setItem('money',money); shootingRemaining=2; shootingActive=true; localStorage.setItem('shootingRemaining',shootingRemaining); updateHUD(); loadShop(); alert('Masz strzały przez 2 gry!'); } else alert('Za mało pieniędzy!');};
+  items.appendChild(sdiv);
+  const sh=document.createElement('div'); sh.className='shop-item'; sh.innerHTML=`<div class="shop-label">🛡 Tarcza (dopóki nie zginie)</div><div class="shop-price">15💰</div>`;
+  sh.onclick=()=>{if(money>=15){ money-=15; localStorage.setItem('money',money); shieldActive=true; localStorage.setItem('shieldActive','true'); updateHUD(); loadShop(); alert('Tarcza aktywna — obroni Cię przed następnym uderzeniem.'); } else alert('Za mało pieniędzy!');};
+  items.appendChild(sh);
+}
+
+// --- Restart ---
+function onRestart(){ if(shootingRemaining>0){ shootingRemaining=Math.max(0,shootingRemaining-1); localStorage.setItem('shootingRemaining',shootingRemaining); shootingActive=shootingRemaining>0; } initGame(); loadShop(); updateHUD(); }
+
+// --- Start ---
+initGame(); loadShop(); updateHUD(); requestAnimationFrame(gameLoop);
+
+// --- PWA: Service Worker ---
+if('serviceWorker' in navigator){
+  navigator.serviceWorker.register('sw.js').then(()=>{console.log('Service Worker zarejestrowany');});
+}
+</script>
+</body>
+</html>
