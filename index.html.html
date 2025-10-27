@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Kosmiczna Rakieta — PWA</title>
+<meta name="description" content="Kosmiczna gra rakietowa w przeglądarce. Zbieraj pieniądze, ulepszaj rakietę i unikaj przeszkód!">
 <link rel="manifest" href="manifest.json">
 <style>
 :root {
@@ -27,6 +28,12 @@ body{
   display:flex;
   flex-direction:column;
   align-items:center;
+}
+h1{
+  text-align:center;
+  margin:12px 0;
+  color: var(--accent);
+  text-shadow:1px 1px 2px black;
 }
 .canvas-wrap{
   width:100%;
@@ -112,6 +119,7 @@ body{
 </head>
 <body>
 <div id="app">
+<h1>Kosmiczna Rakieta 🚀</h1>
 <div class="canvas-wrap">
   <canvas id="gameCanvas"></canvas>
   <div class="hud">
@@ -385,7 +393,7 @@ initGame(); loadShop(); updateHUD(); requestAnimationFrame(gameLoop);
 
 // --- PWA: Service Worker ---
 if('serviceWorker' in navigator){
-  navigator.serviceWorker.register('sw.js').then(()=>{console.log('Service Worker zarejestrowany');});
+  navigator.serviceWorker.register('sw.js').then(()=>{console.log('Service Worker zarejestrowany');}).catch(()=>{/* silently fail if sw not present */});
 }
 </script>
 </body>
